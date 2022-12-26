@@ -1,5 +1,7 @@
 from app import mysql, session
 from blockchain import Block, Blockchain
+import mysql.connector as Mysql
+from config import *
 
 
 # custom exceptions for transaction errors
@@ -111,6 +113,40 @@ def isnewuser(username):
     return False if username in usernames else True
 
 
+def isnewuser2(username):
+    mydb = Mysql.connect(
+        host=host,
+        user=user,
+        password=password,
+        database=database
+    )
+
+    mycursor = mydb.cursor()
+
+    mycursor.execute(f"SELECT * FROM users WHERE username=\'{username}\'")
+
+    myresult = mycursor.fetchall()
+
+    return False if myresult else True
+
+
+def insert_user(name, email, username, pass_hash):
+    mydb = Mysql.connect(
+        host=host,
+        user=user,
+        password=password,
+        database=database
+    )
+
+    mycursor = mydb.cursor()
+
+    sql = "INSERT INTO users (name, email, username, password) VALUES (%s, %s, %s, %s)"
+    val = (name, email, username, pass_hash)
+    mycursor.execute(sql, val)
+
+    mydb.commit()
+
+
 # send money from one user to another
 def send_money(sender, recipient, amount):
     # verify that the amount is an integer or floating value
@@ -139,10 +175,51 @@ def send_money(sender, recipient, amount):
     sync_blockchain(blockchain)
 
 
+def send_money2(sender, recipient, amount):
+    # verify that the amount is an integer or floating value
+    try:
+        amount = float(amount)
+    except ValueError:
+        raise InvalidTransactionException("Invalid Transaction.")
+
+    # verify that the user has enough money to send (exception if it is the BANK)
+    if amount > get_balance2(sender) and sender != "BANK":
+        raise InsufficientFundsException("Insufficient Funds.")
+
+    # verify that the user is not sending money to themselves or amount is less than or 0
+    elif sender == recipient or amount <= 0.00:
+        raise InvalidTransactionException("Invalid Transaction.")
+
+    # verify that the recipient exists
+    elif isnewuser2(recipient):
+        raise InvalidTransactionException("User Does Not Exist.")
+
+    # update the blockchain and sync to mysql
+    blockchain = get_blockchain2()
+    number = len(blockchain.chain) + 1
+    data = "%s-->%s-->%s" % (sender, recipient, amount)
+    blockchain.mine(Block(number, data=data))
+    sync_blockchain2(blockchain)
+
+
 # get the balance of a user
 def get_balance(username):
     balance = 0.00
     blockchain = get_blockchain()
+
+    # loop through the blockchain and update balance
+    for block in blockchain.chain:
+        data = block.data.split("-->")
+        if username == data[0]:
+            balance -= float(data[2])
+        elif username == data[1]:
+            balance += float(data[2])
+    return balance
+
+
+def get_balance2(username):
+    balance = 0.00
+    blockchain = get_blockchain2()
 
     # loop through the blockchain and update balance
     for block in blockchain.chain:
@@ -164,6 +241,28 @@ def get_blockchain():
     return blockchain
 
 
+def get_blockchain2():
+    blockchain = Blockchain()
+    mydb = Mysql.connect(
+        host=host,
+        user=user,
+        password=password,
+        database=database
+    )
+
+    mycursor = mydb.cursor()
+
+    mycursor.execute("SELECT * FROM blockchain")
+
+    myresult = mycursor.fetchall()
+
+    for b in myresult:
+        blockchain.add(Block(int(b[0]), b[2], b[3], int(b[4])))
+        # print(b)
+
+    return blockchain
+
+
 # update blockchain in mysql table
 def sync_blockchain(blockchain):
     blockchain_sql = Table("blockchain", "number", "hash", "previous", "data", "nonce")
@@ -171,3 +270,23 @@ def sync_blockchain(blockchain):
 
     for block in blockchain.chain:
         blockchain_sql.insert(str(block.number), block.hash(), block.previous_hash, block.data, block.nonce)
+
+
+def sync_blockchain2(blockchain):
+    mydb = Mysql.connect(
+        host=host,
+        user=user,
+        password=password,
+        database=database
+    )
+
+    mycursor = mydb.cursor()
+
+    mycursor.execute("DELETE FROM blockchain")
+
+    for block in blockchain.chain:
+        sql = "INSERT INTO blockchain (number, hash, previous, data, nonce) VALUES (%s, %s, %s, %s, %s)"
+        val = (str(block.number), block.hash(), block.previous_hash, block.data, str(block.nonce))
+        mycursor.execute(sql, val)
+
+    mydb.commit()

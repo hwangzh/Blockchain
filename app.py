@@ -13,6 +13,10 @@ from forms import *
 
 # other dependencies
 import time
+import socket
+import threading
+import json
+import os
 
 # initialize the app
 app = Flask(__name__)
@@ -60,7 +64,7 @@ def register():
 
     # if form is submitted
     if request.method == 'POST' and form.validate():
-        # collect form data
+
         username = form.username.data
         email = form.email.data
         name = form.name.data
@@ -69,7 +73,18 @@ def register():
         if isnewuser(username):
             # add the user to mysql and log them in
             password = sha256_crypt.encrypt(form.password.data)
-            users.insert(name, email, username, password)
+
+            data = {
+                "type": "register",
+                "username": f"{username}",
+                "password": f"{password}",
+                "email": f"{email}",
+                "name": f"{name}"
+            }
+            write_thread = threading.Thread(target=write, args=(str(data),))
+            write_thread.start()
+
+            # users.insert(name, email, username, password)
             log_in_user(username)
             return redirect(url_for('dashboard'))
         else:
@@ -123,7 +138,19 @@ def transaction():
     if request.method == 'POST':
         try:
             # attempt to execute the transaction
-            send_money(session.get('username'), form.username.data, form.amount.data)
+            sender = session.get('username')
+            recipient = form.username.data
+            amount = form.amount.data
+
+            # send_money(sender, recipient, amount)
+            data = {
+                "type": "transaction",
+                "sender": f"{sender}",
+                "recipient": f"{recipient}",
+                "amount": f"{amount}"
+            }
+            write_thread = threading.Thread(target=write, args=(str(data),))
+            write_thread.start()
             flash("Money Sent!", "success")
         except Exception as e:
             flash(str(e), 'danger')
@@ -143,7 +170,17 @@ def buy():
     if request.method == 'POST':
         # attempt to buy amount
         try:
-            send_money("BANK", session.get('username'), form.amount.data)
+            # send_money("BANK", session.get('username'), form.amount.data)
+
+            data = {
+                "type": "transaction",
+                "sender": "BANK",
+                "recipient": f"{session.get('username')}",
+                "amount": f"{form.amount.data}"
+            }
+            write_thread = threading.Thread(target=write, args=(str(data),))
+            write_thread.start()
+
             flash("Purchase Successful!", "success")
         except Exception as e:
             flash(str(e), 'danger')
@@ -180,7 +217,44 @@ def index():
     return render_template('index.html')
 
 
+stop_thread = False
+
+
+def recieve():
+    while True:
+        global stop_thread
+        if stop_thread:
+            break
+        try:
+            message = client.recv(1024).decode('utf-8')
+            # msg = message
+            # msg = msg.replace("\'", "\"")
+            #
+            # rs = json.loads(msg)
+            # print(rs)
+            print(message)
+        except:
+            print('Error Occured while Connecting')
+            client.close()
+            break
+
+
+def write(message):
+    try:
+        client.send(message.encode('utf-8'))
+    except:
+        print('Error Occured while Sending')
+
+
 # Run app
 if __name__ == '__main__':
+    ip = "192.168.1.102"
+    port = 5555
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client.connect((ip, port))
+
+    recieve_thread = threading.Thread(target=recieve)
+    recieve_thread.start()
+
     app.secret_key = 'secret123'
     app.run(debug=True)
